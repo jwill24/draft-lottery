@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Draft Lottery</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8F%80%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="scanlines"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <h1>DRAFT&nbsp;LOTTERY</h1>
+    </div>
+    <div class="host-area">
+      <span id="phase-pill" class="pill">Configuring</span>
+      <button id="host-btn" class="ghost-btn">Host controls</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- CONFIG -->
+    <section id="config-view" class="view">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Standings &amp; Odds</h2>
+          <p class="hint">Worst record at the top (best odds). Weights are
+            relative lottery balls — a team with weight 0 falls to its spot by
+            record. Only the host can edit and start.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table id="config-table">
+            <thead>
+              <tr>
+                <th class="col-seed">#</th>
+                <th class="col-name">Team</th>
+                <th class="col-weight">Weight</th>
+                <th class="col-odds">#1 odds</th>
+                <th class="col-x"></th>
+              </tr>
+            </thead>
+            <tbody id="config-body"></tbody>
+          </table>
+        </div>
+
+        <div class="config-actions">
+          <button id="add-row" class="ghost-btn" disabled>+ Add team</button>
+          <div class="spacer"></div>
+          <button id="save-btn" class="ghost-btn" disabled>Save</button>
+          <button id="start-btn" class="primary-btn" disabled>Run Lottery ▸</button>
+        </div>
+        <p id="config-msg" class="msg"></p>
+        <p class="viewer-note" id="viewer-note">
+          You're watching as a viewer. The host runs the draw — results appear
+          here live.
+        </p>
+      </div>
+    </section>
+
+    <!-- REVEAL -->
+    <section id="reveal-view" class="view hidden">
+      <div class="stage">
+        <div id="animator" class="animator hidden">
+          <div class="anim-label">Now revealing</div>
+          <div class="pick-badge">PICK #<span id="anim-pos">–</span></div>
+          <div class="reel-window">
+            <div id="reel" class="reel"></div>
+          </div>
+          <div class="countdown"><div id="countdown-bar" class="countdown-bar"></div></div>
+        </div>
+        <div id="stage-idle" class="stage-idle">
+          <p id="idle-text">Waiting for the host…</p>
+        </div>
+      </div>
+
+      <div class="board-wrap">
+        <ol id="board" class="board"></ol>
+      </div>
+
+      <div id="host-controls" class="host-controls hidden">
+        <button id="reveal-btn" class="primary-btn big">Reveal Next Pick ▸</button>
+        <button id="reset-btn" class="ghost-btn">Reset</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Host login modal -->
+  <div id="host-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3>Host controls</h3>
+      <p>Enter the host passcode to run the lottery.</p>
+      <input id="passcode" type="password" placeholder="Passcode" autocomplete="off">
+      <p id="host-err" class="msg err"></p>
+      <div class="modal-actions">
+        <button id="host-cancel" class="ghost-btn">Cancel</button>
+        <button id="host-submit" class="primary-btn">Unlock</button>
+      </div>
+    </div>
+  </div>
+
+  <canvas id="confetti"></canvas>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
