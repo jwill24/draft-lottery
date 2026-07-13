@@ -1,0 +1,39 @@
+# fly.io configuration for the Draft Lottery dashboard.
+#
+# The lottery keeps its state in memory and shares it across every viewer, so
+# this app must run as a SINGLE machine with a SINGLE gunicorn worker. After
+# `fly launch`, make sure only one machine runs:  `fly scale count 1`.
+
+app = "draft-lottery"          # change to your own unique app name
+primary_region = "iad"         # pick a region near your group
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Keep one machine always running so in-progress lottery state is never lost.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+[checks]
+  [checks.health]
+    type = "http"
+    path = "/healthz"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "5s"
