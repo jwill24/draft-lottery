@@ -85,12 +85,26 @@ function buildReel(targetName) {
   reel.style.transition = "none";
   reel.style.transform = "translateY(0)";
 
-  // A long strip of shuffled names ending on the real result.
+  // A long strip of shuffled names ending on the real result. No name is ever
+  // allowed to appear in two consecutive slots (including into the landing
+  // slot), unless the pool has only a single distinct name to work with.
   const pool = teamsForReel.length ? teamsForReel : [targetName];
   const strip = [];
   const COUNT = 34;
+  let prev = null;
+  const pick = (exclude) => {
+    let choices = pool.filter((x) => x !== exclude);
+    if (choices.length === 0) choices = pool; // only one distinct name exists
+    return choices[Math.floor(Math.random() * choices.length)];
+  };
   for (let i = 0; i < COUNT; i++) {
-    strip.push(pool[Math.floor(Math.random() * pool.length)]);
+    const name = pick(prev);
+    strip.push(name);
+    prev = name;
+  }
+  // The slot right before the landing slot must also differ from the target.
+  if (strip.length && strip[strip.length - 1] === targetName) {
+    strip[strip.length - 1] = pick(targetName);
   }
   strip.push(targetName); // landing slot
   strip.forEach((name, i) => {
@@ -163,6 +177,50 @@ function renderBoard(state) {
   });
 }
 
+// ---------------------------------------------------------------- odds panel
+// Live "odds to land #1" for each team, straight from the server. Rows are
+// keyed by team id so the bars glide as the numbers change; winner on top,
+// then live contenders (highest first), then eliminated teams.
+function renderOdds(state) {
+  const list = $("odds-list");
+  const entries = (state.team_odds || []).slice();
+  const rank = (e) => (e.status === "winner" ? 0 : e.status === "live" ? 1 : 2);
+  entries.sort((a, b) => {
+    if (rank(a) !== rank(b)) return rank(a) - rank(b);
+    if (a.status === "live") return b.odds - a.odds;
+    if (a.status === "out") return (a.position || 999) - (b.position || 999);
+    return 0;
+  });
+
+  const present = new Set(entries.map((e) => String(e.cid)));
+  [...list.children].forEach((li) => {
+    if (!present.has(li.dataset.cid)) li.remove();
+  });
+
+  entries.forEach((e) => {
+    let li = list.querySelector(`li[data-cid="${e.cid}"]`);
+    if (!li) {
+      li = document.createElement("li");
+      li.dataset.cid = e.cid;
+      li.innerHTML = '<span class="odds-name"></span>' +
+        '<span class="odds-pct"></span>' +
+        '<span class="odds-bar"><i></i></span>';
+      list.appendChild(li);
+    }
+    li.className = "odds-row status-" + e.status;
+    li.querySelector(".odds-name").textContent = e.name;
+    const pct = li.querySelector(".odds-pct");
+    if (e.status === "out") {
+      pct.textContent = e.position ? "#" + e.position : "out";
+    } else {
+      pct.textContent = e.odds.toFixed(1) + "%";
+    }
+    li.querySelector(".odds-bar i").style.width =
+      Math.max(0, Math.min(100, e.odds)) + "%";
+    list.appendChild(li); // re-append in sorted order (keeps the node + anim)
+  });
+}
+
 // ---------------------------------------------------------------- confetti
 function fireConfetti() {
   const canvas = $("confetti");
@@ -219,18 +277,16 @@ function render(state) {
     renderConfig(state);
   } else {
     renderBoard(state);
+    renderOdds(state);
     handleAnimation(state);
 
-    // host controls
+    // host controls. `awaiting_host` means the next pick needs a click; the
+    // final #2 fill is never a manual step (it chains off the #1 reveal).
     const hc = $("host-controls");
     const revealBtn = $("reveal-btn");
-    const canManual = state.phase === "reveal"
-      && !state.animating
-      && state.revealed_count >= state.auto_reveal_count
-      && state.revealed_count < state.total;
     revealBtn.classList.toggle("hidden", state.phase === "complete");
-    revealBtn.disabled = !canManual;
-    revealBtn.textContent = state.revealed_count + 1 >= state.total
+    revealBtn.disabled = !state.awaiting_host;
+    revealBtn.textContent = state.next_position === 1
       ? "Reveal #1 Pick ▸" : "Reveal Next Pick ▸";
     hc.classList.toggle("hidden", !isHost());
 
@@ -240,12 +296,14 @@ function render(state) {
       idle.textContent = "";
     } else if (state.phase === "complete") {
       idle.textContent = "🏆 The board is set. Congrats to the #1 pick!";
-    } else if (state.revealed_count < state.auto_reveal_count) {
-      idle.textContent = "Revealing the early picks…";
-    } else {
+    } else if (state.awaiting_host) {
       idle.textContent = isHost()
         ? "Click below to reveal the next pick."
         : "Waiting for the host to reveal the next pick…";
+    } else if (state.next_position === 2) {
+      idle.textContent = "And that leaves pick #2…";
+    } else {
+      idle.textContent = "Revealing the early picks…";
     }
   }
 
