@@ -30,6 +30,9 @@ REVEAL_ANIMATION_SECONDS = float(os.environ.get("REVEAL_ANIMATION_SECONDS", "4.0
 # Pause between the automatic reveals of the first four picks.
 AUTO_REVEAL_PAUSE_SECONDS = 1.6
 
+# Beat after the #1 pick's animation before pick #2 is filled in (no spin).
+FILL_DELAY_SECONDS = 1.1
+
 # Number of picks that reveal automatically before the host must click.
 AUTO_REVEAL_COUNT = 4
 
@@ -61,8 +64,9 @@ def _new_state():
     return {
         "phase": "config",          # config | reveal | complete
         "teams": _default_teams(),  # [{name, weight}] worst record first
-        "order": [],                # final draft order; order[0] == pick #1
-        "revealed_count": 0,        # how many picks (from the last) are shown
+        "order": [],                # [{name, weight, cid}]; order[0] == pick #1
+        "reveal_positions": [],     # draft positions in the order they reveal
+        "revealed_count": 0,        # how many reveal steps have completed
         "animating": False,
         "anim_position": None,      # draft position currently being revealed
         "anim_ends_at": 0.0,        # epoch seconds when the result appears
@@ -88,42 +92,122 @@ def _draw_order(teams):
     """
     remaining = list(range(len(teams)))
     order = []
+
+    def _entry(i):
+        return {"name": teams[i]["name"],
+                "weight": max(0.0, float(teams[i]["weight"])),
+                "cid": i}
+
     while any(teams[i]["weight"] > 0 for i in remaining):
         weights = [max(0.0, float(teams[i]["weight"])) for i in remaining]
         chosen = random.choices(remaining, weights=weights, k=1)[0]
-        order.append(teams[chosen]["name"])
+        order.append(_entry(chosen))
         remaining.remove(chosen)
     for i in remaining:  # zero-weight teams keep their standings order
-        order.append(teams[i]["name"])
+        order.append(_entry(i))
     return order
+
+
+def _reveal_positions(n):
+    """Order in which draft positions are revealed.
+
+    Bottom pick first, working up -- but the final two swap so #1 is revealed
+    (with its animation) *before* #2, which is then filled in without a spin:
+    e.g. for n=6 -> [6, 5, 4, 3, 1, 2].
+    """
+    if n <= 1:
+        return list(range(1, n + 1))
+    return list(range(n, 2, -1)) + [1, 2]
+
+
+def _step_animates(n, seq_index):
+    """Whether reveal step `seq_index` plays the spin animation.
+
+    Every step animates except the trailing #2 fill, which chains off the #1
+    reveal with no spin.
+    """
+    if seq_index < 0 or seq_index >= n:
+        return False
+    return not (n >= 2 and seq_index == n - 1)
 
 
 def _public_state():
     """State safe to send to every client (no host token)."""
     with _lock:
-        n = len(STATE["order"])
+        order = STATE["order"]
+        n = len(order)
         revealed = STATE["revealed_count"]
-        # A position p (1-based, 1 == best pick) is revealed once it is within
-        # the last `revealed` picks: positions n, n-1, ... n-revealed+1.
+        reveal_positions = STATE["reveal_positions"]
+        revealed_set = set(reveal_positions[:revealed])
+
+        # Board: a position is shown once its reveal step has completed.
         picks = []
-        for idx, name in enumerate(STATE["order"]):
+        for idx, item in enumerate(order):
             position = idx + 1
-            is_revealed = position > n - revealed
+            is_revealed = position in revealed_set
             picks.append({
                 "position": position,
-                "name": name if is_revealed else None,
+                "name": item["name"] if is_revealed else None,
                 "revealed": is_revealed,
             })
+
         # While a pick is animating we expose its name so every client's reel
         # lands on the real result in sync. The board still shows a placeholder
         # for it until the animation completes (revealed_count catches up).
         anim_name = None
         if STATE["animating"] and STATE["anim_position"] is not None:
-            anim_name = STATE["order"][STATE["anim_position"] - 1]
+            anim_name = order[STATE["anim_position"] - 1]["name"]
+
+        # Live "odds to land #1" for each team, derived only from public info
+        # (weights + who has already been placed). While #1 is undecided the
+        # unrevealed teams are exactly the contenders for #1, so by the draw's
+        # Plackett-Luce property each one's chance is weight / sum(remaining).
+        # Once #1 is revealed it's settled: that team is the winner, rest are 0.
+        pos1_revealed = 1 in revealed_set
+        remaining_weight = sum(
+            order[p - 1]["weight"] for p in range(1, n + 1)
+            if p not in revealed_set) if not pos1_revealed else 0.0
+        team_odds = []
+        for idx, item in enumerate(order):
+            position = idx + 1
+            is_revealed = position in revealed_set
+            if pos1_revealed:
+                if position == 1:
+                    entry = {"status": "winner", "odds": 100.0}
+                elif is_revealed:
+                    entry = {"status": "out", "odds": 0.0}
+                else:
+                    entry = None  # #2 not yet filled -> keep hidden for a beat
+            elif is_revealed:
+                entry = {"status": "out", "odds": 0.0}
+            else:
+                odds = (100.0 * item["weight"] / remaining_weight
+                        if remaining_weight > 0 else 0.0)
+                entry = {"status": "live", "odds": odds}
+            if entry is None:
+                continue
+            entry.update({
+                "cid": item["cid"],
+                "name": item["name"],
+                # Only expose the draft position for already-placed teams; a
+                # live contender's position stays hidden until it's revealed.
+                "position": position if is_revealed or entry["status"] == "winner" else None,
+            })
+            team_odds.append(entry)
+
+        total_steps = len(reveal_positions)
+        seq = revealed
+        next_position = reveal_positions[seq] if seq < total_steps else None
+        awaiting_host = (STATE["phase"] == "reveal"
+                         and not STATE["animating"]
+                         and seq >= AUTO_REVEAL_COUNT
+                         and seq < total_steps
+                         and _step_animates(n, seq))
         return {
             "phase": STATE["phase"],
             "teams": STATE["teams"],
             "picks": picks,
+            "team_odds": team_odds,
             "total": n,
             "revealed_count": revealed,
             "animating": STATE["animating"],
@@ -131,6 +215,8 @@ def _public_state():
             "anim_name": anim_name,
             "anim_remaining": max(0.0, STATE["anim_ends_at"] - time.time())
             if STATE["animating"] else 0.0,
+            "next_position": next_position,
+            "awaiting_host": awaiting_host,
             "auto_reveal_count": AUTO_REVEAL_COUNT,
             "animation_seconds": REVEAL_ANIMATION_SECONDS,
             "version": STATE["version"],
@@ -148,6 +234,8 @@ def _is_host(req):
 def _finish_reveal(seq_index, auto):
     """Called after the animation for sequence `seq_index` completes."""
     time.sleep(REVEAL_ANIMATION_SECONDS)
+    chain_fill = False
+    auto_more = False
     with _lock:
         # Guard against a reset that happened mid-animation.
         if STATE["phase"] != "reveal" or STATE["revealed_count"] != seq_index:
@@ -155,15 +243,35 @@ def _finish_reveal(seq_index, auto):
         STATE["revealed_count"] = seq_index + 1
         STATE["animating"] = False
         STATE["anim_position"] = None
-        if STATE["revealed_count"] >= len(STATE["order"]):
+        n = len(STATE["order"])
+        if STATE["revealed_count"] >= len(STATE["reveal_positions"]):
             STATE["phase"] = "complete"
         _bump()
-        keep_going = (auto
-                      and STATE["phase"] == "reveal"
-                      and STATE["revealed_count"] < AUTO_REVEAL_COUNT)
-    if keep_going:
+        nxt = STATE["revealed_count"]
+        if STATE["phase"] == "reveal":
+            if not _step_animates(n, nxt):
+                # The trailing #2 fill always follows the #1 reveal, with no
+                # spin, regardless of whether we're in auto or manual mode.
+                chain_fill = True
+            elif auto and nxt < AUTO_REVEAL_COUNT:
+                auto_more = True
+    if chain_fill:
+        time.sleep(FILL_DELAY_SECONDS)
+        _fill_next(nxt)
+    elif auto_more:
         time.sleep(AUTO_REVEAL_PAUSE_SECONDS)
         _begin_reveal(auto=True)
+
+
+def _fill_next(seq_index):
+    """Reveal a non-animating step (the #2 fill) in place, no spin."""
+    with _lock:
+        if STATE["phase"] != "reveal" or STATE["revealed_count"] != seq_index:
+            return
+        STATE["revealed_count"] = seq_index + 1
+        if STATE["revealed_count"] >= len(STATE["reveal_positions"]):
+            STATE["phase"] = "complete"
+        _bump()
 
 
 def _begin_reveal(auto):
@@ -173,12 +281,15 @@ def _begin_reveal(auto):
             return False
         seq_index = STATE["revealed_count"]
         n = len(STATE["order"])
-        if seq_index >= n:
+        if seq_index >= len(STATE["reveal_positions"]):
             return False
         # Manual reveals are only allowed once the auto picks are done.
         if not auto and seq_index < AUTO_REVEAL_COUNT:
             return False
-        position = n - seq_index  # 1-based draft position being revealed
+        # Non-animating steps (the #2 fill) are only ever reached by chaining.
+        if not _step_animates(n, seq_index):
+            return False
+        position = STATE["reveal_positions"][seq_index]
         STATE["animating"] = True
         STATE["anim_position"] = position
         STATE["anim_ends_at"] = time.time() + REVEAL_ANIMATION_SECONDS
@@ -251,6 +362,7 @@ def api_start():
         if not STATE["teams"]:
             return jsonify({"ok": False, "error": "No teams configured."}), 400
         STATE["order"] = _draw_order(STATE["teams"])
+        STATE["reveal_positions"] = _reveal_positions(len(STATE["order"]))
         STATE["phase"] = "reveal"
         STATE["revealed_count"] = 0
         STATE["animating"] = False

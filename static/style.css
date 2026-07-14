@@ -176,6 +176,64 @@ tbody tr.readonly .row-x { display: none; }
 }
 .animator.reveal-final .pick-badge { color: var(--hot); text-shadow: 0 0 30px rgba(255,92,122,.6); }
 
+/* ---- reveal layout: board + odds ---- */
+.reveal-grid {
+  display: grid; grid-template-columns: 1fr 320px; gap: 22px; align-items: start;
+}
+@media (max-width: 860px) { .reveal-grid { grid-template-columns: 1fr; } }
+
+/* ---- odds panel ---- */
+.odds-panel {
+  position: sticky; top: 20px;
+  background: linear-gradient(180deg, var(--panel), #0f1728);
+  border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow);
+  padding: 18px 18px 12px;
+}
+.odds-head h3 {
+  margin: 0; font-size: 15px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--accent);
+}
+.odds-sub { margin: 4px 0 14px; color: var(--muted); font-size: 12px; }
+.odds-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.odds-row {
+  display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto;
+  gap: 2px 10px; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid transparent; background: #0c1424;
+  transition: background .3s, border-color .3s, opacity .4s;
+}
+.odds-row .odds-name {
+  grid-column: 1; font-weight: 700; font-size: 14px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 210px;
+}
+.odds-row .odds-pct {
+  grid-column: 2; grid-row: 1; align-self: center; font-variant-numeric: tabular-nums;
+  font-weight: 800; font-size: 14px; color: var(--accent-2);
+}
+.odds-row .odds-bar {
+  grid-column: 1 / -1; grid-row: 2; height: 6px; border-radius: 4px;
+  background: #0a1120; overflow: hidden; margin-top: 4px;
+}
+.odds-row .odds-bar i {
+  display: block; height: 100%; width: 0;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  transition: width .6s cubic-bezier(.2,.7,.3,1);
+}
+.odds-row.status-live { border-color: var(--line); }
+.odds-row.status-out { opacity: .42; }
+.odds-row.status-out .odds-pct { color: var(--muted); }
+.odds-row.status-out .odds-bar i { background: #2a3550; }
+.odds-row.status-winner {
+  border-color: var(--hot);
+  background: linear-gradient(90deg, rgba(255,92,122,.18), #0c1424);
+}
+.odds-row.status-winner .odds-name::before { content: "🏆 "; }
+.odds-row.status-winner .odds-pct { color: var(--hot); }
+.odds-row.status-winner .odds-bar i { background: var(--hot); }
+.odds-row .odds-tag {
+  grid-column: 2; grid-row: 1; align-self: center; font-size: 11px;
+  color: var(--muted); font-weight: 700;
+}
+
 /* ---- board ---- */
 .board-wrap { }
 .board { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
